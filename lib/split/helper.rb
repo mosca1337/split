@@ -6,28 +6,32 @@ module Split
     module_function
 
     def ab_test(metric_descriptor, control = nil, *alternatives)
-      begin
-        experiment = ExperimentCatalog.find_or_initialize(metric_descriptor, control, *alternatives)
-        alternative = if Split.configuration.enabled
-          experiment.save
-          trial = Trial.new(:user => ab_user, :experiment => experiment,
-              :override => override_alternative(experiment.name), :exclude => exclude_visitor?,
-              :disabled => split_generically_disabled?)
-          alt = trial.choose!(self)
-          alt ? alt.name : nil
-        else
-          control_variable(experiment.control)
-        end
-      rescue Errno::ECONNREFUSED, Redis::BaseError, SocketError => e
-        raise(e) unless Split.configuration.db_failover
-        Split.configuration.db_failover_on_db_error.call(e)
+      if !exclude_visitor?
+        begin
+          experiment = ExperimentCatalog.find_or_initialize(metric_descriptor, control, *alternatives)
+          alternative = if Split.configuration.enabled
+            experiment.save
+            trial = Trial.new(:user => ab_user, :experiment => experiment,
+                :override => override_alternative(experiment.name), :exclude => exclude_visitor?,
+                :disabled => split_generically_disabled?)
+            alt = trial.choose!(self)
+            alt ? alt.name : nil
+          else
+            control_variable(experiment.control)
+          end
+        rescue Errno::ECONNREFUSED, Redis::BaseError, SocketError => e
+          raise(e) unless Split.configuration.db_failover
+          Split.configuration.db_failover_on_db_error.call(e)
 
-        if Split.configuration.db_failover_allow_parameter_override
-          alternative = override_alternative(experiment.name) if override_present?(experiment.name)
-          alternative = control_variable(experiment.control) if split_generically_disabled?
+          if Split.configuration.db_failover_allow_parameter_override
+            alternative = override_alternative(experiment.name) if override_present?(experiment.name)
+            alternative = control_variable(experiment.control) if split_generically_disabled?
+          end
+        ensure
+          alternative ||= control_variable(experiment.control)
         end
-      ensure
-        alternative ||= control_variable(experiment.control)
+      else
+        alternative = control
       end
 
       if block_given?
@@ -149,3 +153,4 @@ module Split
     end
   end
 end
+
